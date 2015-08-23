@@ -23,6 +23,7 @@ var (
 	timeout      = time.After(30 * time.Second)
 	results      = make(chan []string, 10)
 	hostsfilearg = flag.String("g", "", "")
+	bufferout    = flag.Bool("buffer", false, "")
 )
 
 func osUsername() (string, string, error) {
@@ -54,7 +55,7 @@ func getAgentAuths() *agentAuths {
 	return aa
 }
 
-func execCmd(cmd, hostname, username string, agent *agentAuths) []string {
+func execCmd(cmd, hostname, username string, agent *agentAuths, buffer *bool) []string {
 	config := &ssh.ClientConfig{
 		User: username,
 		Auth: agent.auths,
@@ -74,6 +75,15 @@ func execCmd(cmd, hostname, username string, agent *agentAuths) []string {
 	}
 	defer session.Close()
 
+	if !*bufferout {
+		session.Stdout = os.Stdout
+		session.Stderr = os.Stderr
+		err = session.Run(cmd)
+		if err != nil {
+			return []string{fmt.Sprintf("%s error: %s", hostname, err)}
+		}
+		return []string{}
+	}
 	var out bytes.Buffer
 	session.Stdout = &out
 	session.Stderr = &out
@@ -87,7 +97,6 @@ func execCmd(cmd, hostname, username string, agent *agentAuths) []string {
 	for i, l := range splitout {
 		resp[i] = fmt.Sprintf("%s: %s", hostname, l)
 	}
-
 	return resp
 }
 
@@ -139,7 +148,7 @@ func main() {
 
 	for _, hostname := range hosts {
 		go func(hostname string) {
-			results <- execCmd(strings.Join(cmd, " "), hostname, username, agent)
+			results <- execCmd(strings.Join(cmd, " "), hostname, username, agent, bufferout)
 		}(hostname)
 	}
 
