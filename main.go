@@ -14,17 +14,20 @@ import (
 	"path"
 	"strings"
 	"time"
+	"sync/atomic"
 )
 
 var (
 	userarg      = flag.String("user", "", "optional username to use")
 	hostsarg     = flag.String("hosts", "", "comma seperated list of hosts")
-	timeoutarg   = flag.Int64("timeout", 30, "timeout in seconds")
-	timeout      = time.After(30 * time.Second)
+	timeoutarg   = flag.Int64("timeout", 90, "timeout in seconds")
+	timeout      = time.After(90 * time.Second)
 	results      = make(chan []string, 10)
 	hostsfilearg = flag.String("g", "", "")
 	bufferout    = flag.Bool("buffer", false, "")
 )
+
+var errCount uint64
 
 func osUsername() (string, string, error) {
 	u, err := user.Current()
@@ -67,10 +70,12 @@ func execCmd(cmd, hostname, username string, agent *agentAuths, buffer *bool) []
 	}
 	conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", hostname), config)
 	if err != nil {
+		atomic.AddUint64(&errCount, 1)
 		return []string{fmt.Sprintf("%s error: %s", hostname, err)}
 	}
 	session, err := conn.NewSession()
 	if err != nil {
+		atomic.AddUint64(&errCount, 1)
 		return []string{fmt.Sprintf("%s error: %s", hostname, err)}
 	}
 	defer session.Close()
@@ -80,6 +85,7 @@ func execCmd(cmd, hostname, username string, agent *agentAuths, buffer *bool) []
 		session.Stderr = os.Stderr
 		err = session.Run(cmd)
 		if err != nil {
+			atomic.AddUint64(&errCount, 1)
 			return []string{fmt.Sprintf("%s error: %s", hostname, err)}
 		}
 		return []string{}
@@ -89,6 +95,7 @@ func execCmd(cmd, hostname, username string, agent *agentAuths, buffer *bool) []
 	session.Stderr = &out
 	err = session.Run(cmd)
 	if err != nil {
+		atomic.AddUint64(&errCount, 1)
 		return []string{fmt.Sprintf("%s error: %s", hostname, err)}
 	}
 
@@ -113,6 +120,8 @@ func loadHostsFile(shortname string) []string {
 
 func main() {
 	flag.Parse()
+
+	errCount = 0
 
 	username, _, err := osUsername()
 	if err != nil {
@@ -162,5 +171,9 @@ func main() {
 			fmt.Println("!! - Timed out - !!")
 			return
 		}
+	}
+
+	if atomic.LoadUint64(&errCount) != 1 {
+		os.Exit(1)
 	}
 }
